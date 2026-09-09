@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Terminal de marcas{% endblock %}
+{% block content %}
+<h1>Terminal de marcas</h1>
+{% if warning and pending %}
+<div class="flash warning">
+  <strong>Atención:</strong> la última marca de este trabajador fue
+  <em>{{ 'Ingreso' if pending.last_event_type == 'entry' else 'Salida' }}</em>
+  y coincide con el tipo seleccionado. ¿Desea continuar?
+  <form method="post" action="{{ url_for('terminal.qr') }}" style="display: inline;">
+    <input type="hidden" name="user_id" value="{{ pending.user_id }}">
+    <input type="hidden" name="event_type" value="{{ pending.event_type }}">
+    <input type="hidden" name="continue" value="1">
+    <button type="submit" style="margin-top: .5rem;">Continuar</button>
+  </form>
+  <a href="{{ url_for('terminal.index') }}">Cancelar</a>
+</div>
+{% endif %}
+<div class="card">
+  <p>Seleccione el trabajador y el tipo de marca para generar el QR.</p>
+  <form method="post" action="{{ url_for('terminal.qr') }}">
+    <label for="user_id">Trabajador</label>
+    <select id="user_id" name="user_id" required>
+      {% for u in users %}
+        <option value="{{ u.id }}" {% if pending and pending.user_id == u.id %}selected{% endif %}>{{ u.name }}</option>
+      {% endfor %}
+    </select>
+    <label for="event_type">Tipo de marca</label>
+    <select id="event_type" name="event_type">
+      <option value="entry">Ingreso</option>
+      <option value="exit">Salida</option>
+    </select>
+    <button type="submit" style="margin-top: 1rem;">Generar QR</button>
+  </form>
+</div>
+{% endblock %}
