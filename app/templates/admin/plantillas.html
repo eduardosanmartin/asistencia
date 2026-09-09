@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Plantillas de turno{% endblock %}
+{% block content %}
+<h1>Plantillas de turno</h1>
+
+<div class="card">
+  <h2>Crear plantilla</h2>
+  <form method="post" action="{{ url_for('admin.plantillas') }}">
+    <label for="name">Nombre</label>
+    <input type="text" id="name" name="name" required>
+    <label for="start_time">Inicio (HH:MM)</label>
+    <input type="text" id="start_time" name="start_time" pattern="([01]\d|2[0-3]):[0-5]\d" placeholder="06:00" required>
+    <label for="end_time">Fin (HH:MM)</label>
+    <input type="text" id="end_time" name="end_time" pattern="([01]\d|2[0-3]):[0-5]\d" placeholder="14:00" required>
+    <label for="weekday_mask">Días (7 caracteres, L-D; 1 = aplica)</label>
+    <input type="text" id="weekday_mask" name="weekday_mask" maxlength="7" value="1111100" required>
+    <button type="submit" style="margin-top: 1rem;">Crear plantilla</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Listado</h2>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr><th>Nombre</th><th>Inicio</th><th>Fin</th><th>Días (L-D)</th><th>Activa</th><th>Acciones</th></tr>
+    </thead>
+    <tbody>
+      {% for t in templates %}
+        <tr>
+          <td>{{ t.name }}</td>
+          <td>{{ t.start_time }}</td>
+          <td>{{ t.end_time }}</td>
+          <td>{{ t.weekday_mask }}</td>
+          <td>{{ 'Sí' if t.is_active else 'No' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('admin.plantilla_toggle', template_id=t.id) }}" style="display: inline;">
+              <button type="submit" class="secondary">{{ 'Desactivar' if t.is_active else 'Activar' }}</button>
+            </form>
+            <form method="post" action="{{ url_for('admin.plantilla_delete', template_id=t.id) }}" style="display: inline;">
+              <button type="submit" class="danger">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6">Sin plantillas registradas.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
