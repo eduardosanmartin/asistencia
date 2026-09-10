@@ -13,6 +13,7 @@ Models:
     SystemConfig     — key/value store for runtime-adjustable settings.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from peewee import (
@@ -258,7 +259,8 @@ def _create_indexes():
         try:
             database.execute_sql(statement)
         except Exception:  # noqa: BLE001 - do not block startup on index errors
-            pass
+            logging.warning("Failed to create index: %s", statement,
+                            exc_info=True)
 
 
 def make_production_db(config):
