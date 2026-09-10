@@ -91,6 +91,9 @@ def role_required(*roles):
 
 def _establish_session(user):
     """Creates the Flask session for an authenticated user."""
+    # Rotate session to prevent session fixation attacks
+    session.clear()
+    session.modified = True
     session["user_id"] = user.id
     session["name"] = user.name
     session["role"] = user.role
@@ -138,7 +141,11 @@ def cambiar_password():
     Validates the current password, requires a new one of at least
     8 characters and clears must_change_password on success.
     """
-    user = User.get_by_id(session.get("user_id"))
+    user = User.get_or_none(User.id == session.get("user_id"))
+    if user is None:
+        session.clear()
+        flash("Su cuenta ha sido eliminada.", "error")
+        return redirect(url_for("auth.login"))
 
     if request.method == "GET":
         return render_template("auth/cambiar_password.html")
