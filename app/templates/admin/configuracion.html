@@ -6,6 +6,7 @@
 <div class="card">
   <h2>Actualizar valor</h2>
   <form method="post" action="{{ url_for('admin.configuracion') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="key">Clave</label>
     <select id="key" name="key" required>
       {% for k in config_keys %}

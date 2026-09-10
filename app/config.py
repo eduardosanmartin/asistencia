@@ -34,6 +34,12 @@ class Config:
     # ── CSRF ──
     WTF_CSRF_TIME_LIMIT = None  # No CSRF token expiration
 
+    # ── Session security ──
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    # SESSION_COOKIE_SECURE is set dynamically in create_app when
+    # APP_BASE_URL uses HTTPS. Not set by default (local HTTP dev).
+
     # ── Super Admin seeding ──
     SUPERADMIN_USERNAME: str = os.getenv("SUPERADMIN_USERNAME", "admin")
     SUPERADMIN_PASSWORD: str = os.getenv("SUPERADMIN_PASSWORD", "")

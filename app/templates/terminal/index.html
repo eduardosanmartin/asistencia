@@ -8,6 +8,7 @@
   <em>{{ 'Ingreso' if pending.last_event_type == 'entry' else 'Salida' }}</em>
   y coincide con el tipo seleccionado. ¿Desea continuar?
   <form method="post" action="{{ url_for('terminal.qr') }}" style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="user_id" value="{{ pending.user_id }}">
     <input type="hidden" name="event_type" value="{{ pending.event_type }}">
     <input type="hidden" name="continue" value="1">
@@ -19,6 +20,7 @@
 <div class="card">
   <p>Seleccione el trabajador y el tipo de marca para generar el QR.</p>
   <form method="post" action="{{ url_for('terminal.qr') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="user_id">Trabajador</label>
     <select id="user_id" name="user_id" required>
       {% for u in users %}

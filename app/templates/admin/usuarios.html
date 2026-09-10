@@ -6,6 +6,7 @@
 <div class="card">
   <h2>Crear usuario</h2>
   <form method="post" action="{{ url_for('admin.usuarios') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="username">Usuario</label>
     <input type="text" id="username" name="username" required>
     <label for="email">Email</label>

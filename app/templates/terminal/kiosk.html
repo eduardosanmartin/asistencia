@@ -8,6 +8,7 @@
   <em>{{ 'Ingreso' if pending.last_event_type == 'entry' else 'Salida' }}</em>
   y coincide con el tipo seleccionado. ¿Desea continuar?
   <form method="post" action="{{ url_for('terminal.kiosk') }}" style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="username" value="{{ pending.username }}">
     <input type="hidden" name="event_type" value="{{ pending.event_type }}">
     <input type="hidden" name="continue" value="1">
@@ -19,6 +20,7 @@
 <div class="card">
   <p>Ingrese sus credenciales para marcar su ingreso o salida.</p>
   <form method="post" action="{{ url_for('terminal.kiosk') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="username">Usuario</label>
     <input type="text" id="username" name="username" required
            value="{{ pending.username if pending else '' }}">

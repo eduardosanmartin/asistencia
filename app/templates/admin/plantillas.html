@@ -6,6 +6,7 @@
 <div class="card">
   <h2>Crear plantilla</h2>
   <form method="post" action="{{ url_for('admin.plantillas') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="name">Nombre</label>
     <input type="text" id="name" name="name" required>
     <label for="start_time">Inicio (HH:MM)</label>
@@ -34,9 +35,11 @@
           <td>{{ 'Sí' if t.is_active else 'No' }}</td>
           <td>
             <form method="post" action="{{ url_for('admin.plantilla_toggle', template_id=t.id) }}" style="display: inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="secondary">{{ 'Desactivar' if t.is_active else 'Activar' }}</button>
             </form>
             <form method="post" action="{{ url_for('admin.plantilla_delete', template_id=t.id) }}" style="display: inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="danger">Eliminar</button>
             </form>
           </td>

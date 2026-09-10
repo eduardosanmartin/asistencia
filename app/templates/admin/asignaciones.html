@@ -7,6 +7,7 @@
 <div class="card">
   <h2>Asignar plantilla a usuario</h2>
   <form method="post" action="{{ url_for('admin.asignaciones') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="user_id">Usuario</label>
     <select id="user_id" name="user_id" required>
       {% for u in users %}
@@ -39,6 +40,7 @@
           {% if not scope_user %}
           <td>
             <form method="post" action="{{ url_for('admin.asignacion_delete', assignment_id=a.id) }}" style="display: inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="danger">Eliminar</button>
             </form>
           </td>

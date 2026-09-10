@@ -6,7 +6,7 @@
   {% if username %}<p>Usuario: {{ username }}</p>{% endif %}
   {% if result.event %}
     <p>Código: <strong>{{ result.event.outcome }}</strong></p>
-    {% if result.event.delay_minutes %}
+    {% if result.event.event_type == 'entry' and result.event.delay_minutes %}
       <p>Minutos de atraso: {{ result.event.delay_minutes }}</p>
     {% endif %}
   {% endif %}

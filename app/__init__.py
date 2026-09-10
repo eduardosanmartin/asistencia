@@ -30,13 +30,14 @@ def _seed_superadmin(app):
         return
 
     from .models import User
-    from .services.security import hash_password
+    from .services.security import hash_password, verify_password
 
     try:
         admin = User.get(User.username == username)
         changed = False
-        if admin.password_hash != hash_password(password):
+        if not verify_password(password, admin.password_hash):
             admin.password_hash = hash_password(password)
+            admin.must_change_password = False
             changed = True
         if admin.name != app.config.get("SUPERADMIN_NAME"):
             admin.name = app.config.get("SUPERADMIN_NAME")
@@ -83,11 +84,35 @@ def create_app(testing: bool = False) -> Flask:
     if testing:
         app.config["TESTING"] = True
 
+    # ── Secret key guard ──────────────────────────────────────────────
+    if not testing:
+        _INSECURE_DEFAULTS = {"dev-key-insecure", "change-me-in-prod", "secret"}
+        secret = app.config.get("SECRET_KEY", "")
+        jwt_secret = app.config.get("JWT_SECRET", "")
+        if not secret or secret in _INSECURE_DEFAULTS or len(secret) < 32:
+            raise RuntimeError(
+                "SECRET_KEY is missing or insecure. "
+                "Set FLASK_SECRET_KEY to a unique, random string "
+                "(>= 32 chars) in your environment."
+            )
+        if not jwt_secret or jwt_secret in _INSECURE_DEFAULTS or len(jwt_secret) < 32:
+            raise RuntimeError(
+                "JWT_SECRET is missing or insecure. "
+                "Set JWT_SECRET to a unique, random string "
+                "(>= 32 chars) in your environment."
+            )
+
     # ── CSRF ─────────────────────────────────────────────────────────
     from flask_wtf.csrf import CSRFProtect
 
     csrf = CSRFProtect(app)
     app.extensions["csrf"] = csrf
+
+    # ── Session security (secure cookie for HTTPS) ──────────────────
+    if not testing:
+        base_url = app.config.get("APP_BASE_URL", "")
+        if base_url.lower().startswith("https"):
+            app.config["SESSION_COOKIE_SECURE"] = True
 
     # ── Database ─────────────────────────────────────────────────────
     from .models import db_proxy, init_db, make_production_db, make_test_db

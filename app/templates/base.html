@@ -24,6 +24,16 @@
     button.danger { background: #dc2626; }
     label { display: block; margin-top: .5rem; font-weight: 600; font-size: .9rem; }
   </style>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('form[method="post"]').forEach(function(form) {
+        form.addEventListener('submit', function() {
+          var btn = form.querySelector('button[type="submit"]');
+          if (btn) { btn.disabled = true; btn.textContent = btn.textContent + '...'; }
+        });
+      });
+    });
+  </script>
 </head>
 <body>
   <nav>
@@ -40,6 +50,7 @@
       <span class="spacer"></span>
       <span>{{ session.get('name') }} ({{ session.get('role') }})</span>
       <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit">Cerrar sesión</button>
       </form>
     {% endif %}
