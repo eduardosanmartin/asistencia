@@ -69,11 +69,14 @@ def compute_hours(user_id, start_date, end_date):
     for event in events:
         if event.event_type == "entry":
             if open_pair is not None:
-                # Consecutive entry: close the current pair as still-open
-                # (0 minutes, same day preserved) and anchor a fresh pair
-                # with the new entry.
+                # Consecutive entry: close the current pair as closed
+                # with 0 minutes (same day preserved) and anchor a fresh
+                # pair with the new entry.
                 flags["consecutive_entries"].append(open_pair["entry"])
+                open_pair["is_open"] = False
                 pairs.append(open_pair)
+                if open_pair["late"]:
+                    flags["late_entries"].append(open_pair)
             open_pair = {
                 "entry": event,
                 "exit": None,
@@ -104,12 +107,17 @@ def compute_hours(user_id, start_date, end_date):
             prev_type = "exit"
 
     if open_pair is not None:
+        # Close the open pair at range end (still open)
+        if open_pair["late"]:
+            flags["late_entries"].append(open_pair)
         pairs.append(open_pair)
 
     totals = {
         "minutes": sum(p["minutes"] for p in pairs),
         "extra_minutes": sum(p["minutes"] for p in pairs if p["is_extra"]),
-        "days_worked": len({_local_day(e.timestamp, tz) for e in events}),
+        "days_worked": len(
+            {_local_day(p["entry"].timestamp, tz) for p in pairs}
+        ),
     }
 
     daily, weekly, monthly = {}, {}, {}

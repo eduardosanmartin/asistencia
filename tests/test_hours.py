@@ -11,7 +11,7 @@ from app.models import AttendanceEvent, SystemConfig, User
 from app.services.hours import compute_hours
 from app.services.security import hash_password
 
-from conftest import create_user
+from tests.helpers import create_user
 
 
 def _user(username="obrero"):
@@ -175,3 +175,49 @@ class TestComputeHours:
                                date(2026, 9, 13))
         assert report["totals"]["minutes"] == 480
         assert report["totals"]["days_worked"] == 1
+
+    def test_consecutive_entries_close_first_pair(self, app):
+        """Entry → entry → exit: first pair has is_open=False, minutes=0;
+        second pair closes normally. flags['consecutive_entries'] tracks
+        the first entry."""
+        worker = _user(username="consecutivo")
+        entry1 = _mark(worker, "entry", "OK", _at(6, 0, 7))
+        entry2 = _mark(worker, "entry", "OK", _at(8, 0, 7))
+        exit_ = _mark(worker, "exit", "OK", _at(14, 0, 7))
+
+        report = compute_hours(worker.id, date(2026, 9, 7), date(2026, 9, 7))
+
+        assert len(report["pairs"]) == 2
+        # First pair: closed by consecutive entry, 0 minutes, not open
+        first_pair = report["pairs"][0]
+        assert first_pair["entry"].id == entry1.id
+        assert first_pair["exit"] is None
+        assert first_pair["is_open"] is False
+        assert first_pair["minutes"] == 0
+        # Second pair: normal entry→exit with real minutes
+        second_pair = report["pairs"][1]
+        assert second_pair["entry"].id == entry2.id
+        assert second_pair["exit"].id == exit_.id
+        assert second_pair["is_open"] is False
+        assert second_pair["minutes"] == 360
+        # consecutive_entries flag tracks the first entry
+        assert len(report["flags"]["consecutive_entries"]) == 1
+        assert report["flags"]["consecutive_entries"][0].id == entry1.id
+
+    def test_late_entry_closed_by_consecutive_flagged_late(self, app):
+        """Late entry (delay > grace) → consecutive entry → exit:
+        first pair should appear in flags['late_entries']."""
+        worker = _user(username="late_consec")
+        # Late entry at 06:06 (delay=6, grace=5)
+        entry1 = _mark(worker, "entry", "OK", _at(6, 6, 7), delay=6)
+        entry2 = _mark(worker, "entry", "OK", _at(8, 0, 7))
+        exit_ = _mark(worker, "exit", "OK", _at(14, 0, 7))
+
+        report = compute_hours(worker.id, date(2026, 9, 7), date(2026, 9, 7))
+
+        assert len(report["pairs"]) == 2
+        first_pair = report["pairs"][0]
+        assert first_pair["late"] is True
+        # First pair must appear in late_entries
+        assert len(report["flags"]["late_entries"]) == 1
+        assert report["flags"]["late_entries"][0]["entry"].id == entry1.id
