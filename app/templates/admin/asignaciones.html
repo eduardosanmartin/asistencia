@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Asignaciones{% endblock %}
+{% block content %}
+<h1>Asignaciones de turnos</h1>
+
+{% if users and templates %}
+<div class="card">
+  <h2>Asignar plantilla a usuario</h2>
+  <form method="post" action="{{ url_for('admin.asignaciones') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="user_id">Usuario</label>
+    <select id="user_id" name="user_id" required>
+      {% for u in users %}
+        <option value="{{ u.id }}">{{ u.name }}</option>
+      {% endfor %}
+    </select>
+    <label for="template_id">Plantilla</label>
+    <select id="template_id" name="template_id" required>
+      {% for t in templates %}
+        <option value="{{ t.id }}">{{ t.name }} ({{ t.start_time }}-{{ t.end_time }})</option>
+      {% endfor %}
+    </select>
+    <button type="submit" style="margin-top: 1rem;">Asignar</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>{% if scope_user %}Asignaciones de {{ scope_user.name }}{% else %}Listado{% endif %}</h2>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr><th>Usuario</th><th>Plantilla</th><th>Activa</th>{% if not scope_user %}<th>Acciones</th>{% endif %}</tr>
+    </thead>
+    <tbody>
+      {% for a in assignments %}
+        <tr>
+          <td>{{ a.user.name }}</td>
+          <td>{{ a.template.name }} ({{ a.template.start_time }}-{{ a.template.end_time }})</td>
+          <td>{{ 'Sí' if a.is_active else 'No' }}</td>
+          {% if not scope_user %}
+          <td>
+            <form method="post" action="{{ url_for('admin.asignacion_delete', assignment_id=a.id) }}" style="display: inline;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="danger">Eliminar</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="4">Sin asignaciones registradas.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if scope_user %}
+<div class="card">
+  <h2>Marcas de {{ scope_user.name }}</h2>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr><th>Fecha</th><th>Tipo</th><th>Origen</th><th>Resultado</th></tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+        <tr>
+          <td>{{ e.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td>{{ e.event_type }}</td>
+          <td>{{ e.source }}</td>
+          <td>{{ e.outcome }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4">Sin marcas registradas.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

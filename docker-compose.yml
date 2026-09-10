@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-asistencia}
+      POSTGRES_USER: ${DATABASE_USER:-asistencia}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-asistencia}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-asistencia}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    environment:
+      DATABASE_HOST: db
+      DATABASE_NAME: ${DATABASE_NAME:-asistencia}
+      DATABASE_USER: ${DATABASE_USER:-asistencia}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-asistencia}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-change-me-in-prod}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-admin}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-admin@asistencia.local}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "5000"
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

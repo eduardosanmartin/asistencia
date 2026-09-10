@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Configuración{% endblock %}
+{% block content %}
+<h1>Configuración del sistema</h1>
+
+<div class="card">
+  <h2>Actualizar valor</h2>
+  <form method="post" action="{{ url_for('admin.configuracion') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="key">Clave</label>
+    <select id="key" name="key" required>
+      {% for k in config_keys %}
+        <option value="{{ k }}">{{ k }}</option>
+      {% endfor %}
+    </select>
+    <label for="value">Valor</label>
+    <input type="text" id="value" name="value" required>
+    <button type="submit" style="margin-top: 1rem;">Guardar</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Valores vigentes</h2>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr><th>Clave</th><th>Valor</th></tr>
+    </thead>
+    <tbody>
+      {% for r in config_rows %}
+        <tr>
+          <td>{{ r.key }}</td>
+          <td>{{ r.value }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="2">Sin configuración adicional (se usan los valores por defecto).</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

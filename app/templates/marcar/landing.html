@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Marcar asistencia{% endblock %}
+{% block content %}
+{% if valid %}
+<div class="card">
+  <h1>Confirmar marca</h1>
+  <p><strong>{{ person.name if person else 'Usuario' }}</strong></p>
+  <p>Tipo de marca: <strong>{{ event_label }}</strong></p>
+  <form method="post" action="{{ url_for('marcar.confirm', jwt=jwt) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit">Confirmar</button>
+  </form>
+</div>
+{% else %}
+<div class="card">
+  <h1>Enlace inválido</h1>
+  <p>{{ error }}</p>
+</div>
+{% endif %}
+{% endblock %}

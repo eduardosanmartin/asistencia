@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Usuarios{% endblock %}
+{% block content %}
+<h1>Usuarios</h1>
+
+<div class="card">
+  <h2>Crear usuario</h2>
+  <form method="post" action="{{ url_for('admin.usuarios') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="username">Usuario</label>
+    <input type="text" id="username" name="username" required>
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email">
+    <label for="name">Nombre</label>
+    <input type="text" id="name" name="name" required>
+    <label for="roles">Roles (separados por coma)</label>
+    <input type="text" id="roles" name="roles" placeholder="funcionario,supervisor">
+    <label for="supervisor_id">Supervisor</label>
+    <select id="supervisor_id" name="supervisor_id">
+      <option value="">— Sin supervisor —</option>
+      {% for s in supervisors %}
+        <option value="{{ s.id }}">{{ s.name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" style="margin-top: 1rem;">Crear usuario</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Listado</h2>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+    <thead>
+      <tr><th>Usuario</th><th>Nombre</th><th>Roles</th><th>Supervisor</th><th>Activo</th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.name }}</td>
+          <td>{{ u.role }}</td>
+          <td>{{ u.supervisor.name if u.supervisor else '—' }}</td>
+          <td>{{ 'Sí' if u.is_active else 'No' }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

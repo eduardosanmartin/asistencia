@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Inicio{% endblock %}
+{% block content %}
+<h1>Bienvenido, {{ session.get('name') }}</h1>
+<div class="card">
+  <p>Utilice el <a href="{{ url_for('terminal.index') }}">terminal de marcas</a>
+    para generar el QR de ingreso/salida o usar el kiosco.</p>
+  {% if session.get('role', '').split(',') | select('equalto', 'administrador') | list %}
+    <p>Gestión disponible: <a href="{{ url_for('admin.usuarios') }}">Usuarios</a>,
+    <a href="{{ url_for('admin.plantillas') }}">Plantillas</a>,
+    <a href="{{ url_for('admin.asignaciones') }}">Asignaciones</a>,
+    <a href="{{ url_for('admin.configuracion') }}">Configuración</a>.</p>
+  {% endif %}
+</div>
+{% endblock %}
