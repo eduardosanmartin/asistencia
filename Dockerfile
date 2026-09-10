@@ -12,5 +12,7 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "3", \
-     "--access-logfile", "-", "app:create_app()"]
+# Apply migrations once, then preload the app factory so init_db() and the
+# superadmin seed run a single time in the master process (workers fork and
+# never race on DDL against PostgreSQL).
+CMD ["sh", "-c", "python migrate.py && exec gunicorn --bind 0.0.0.0:5000 --workers 3 --preload --access-logfile - 'app:create_app()'"]
