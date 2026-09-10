@@ -21,11 +21,13 @@ day. Delay = full minutes past the shift start (0 when early).
 """
 
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import jwt
 from flask import current_app
+from peewee import IntegrityError
 
 from app.models import (
     AssignedShift,
@@ -77,6 +79,19 @@ def _window(start_time, end_time, local_now):
     return start, end
 
 
+def _overnight_window(start_time, end_time, local_now):
+    """Compute both possible windows for an overnight shift:
+    1. Started today (22:00 today → 06:00 tomorrow)
+    2. Started yesterday (22:00 yesterday → 06:00 today)
+
+    Returns both (start, end) pairs so callers can check which one
+    the event falls into."""
+    today_start, today_end = _window(start_time, end_time, local_now)
+    yesterday_start = today_start - timedelta(days=1)
+    yesterday_end = today_end - timedelta(days=1)
+    return [(today_start, today_end), (yesterday_start, yesterday_end)]
+
+
 def compute_delay_minutes(shift_start, now):
     """Full minutes past the shift start; 0 when arriving early."""
     delta = (now - shift_start).total_seconds() // 60
@@ -96,6 +111,19 @@ def get_last_event(user_id):
     return (
         AttendanceEvent.select()
         .where(AttendanceEvent.user_id == user_id)
+        .order_by(AttendanceEvent.timestamp.desc())
+        .first()
+    )
+
+
+def get_last_accepted_event(user_id):
+    """Latest accepted (OK/OK_extra) AttendanceEvent for a worker, or None."""
+    return (
+        AttendanceEvent.select()
+        .where(
+            AttendanceEvent.user_id == user_id,
+            AttendanceEvent.outcome.in_(("OK", "OK_extra")),
+        )
         .order_by(AttendanceEvent.timestamp.desc())
         .first()
     )
@@ -126,14 +154,31 @@ def resolve_shift(user_id, now=None):
     ):
         template = assignment.template
         mask = template.weekday_mask or "1111111"
-        if len(mask) > local_now.weekday() and \
-                mask[local_now.weekday()] == "0":
-            continue
-        start, end = _window(template.start_time, template.end_time,
-                             local_now)
-        effective_start = start - timedelta(minutes=grace)
-        if effective_start <= local_now <= end:
-            matches.append((start, assignment))
+
+        if template.is_overnight:
+            # For overnight shifts, check both today-started and
+            # yesterday-started windows.  The weekday mask must be
+            # checked against the START date of each window, not today.
+            windows = _overnight_window(template.start_time,
+                                        template.end_time, local_now)
+            for start, end in windows:
+                window_weekday = start.weekday()
+                if len(mask) > window_weekday and \
+                        mask[window_weekday] == "0":
+                    continue
+                effective_start = start - timedelta(minutes=grace)
+                if effective_start <= local_now <= end:
+                    matches.append((start, assignment))
+                    break
+        else:
+            if len(mask) > local_now.weekday() and \
+                    mask[local_now.weekday()] == "0":
+                continue
+            start, end = _window(template.start_time, template.end_time,
+                                 local_now)
+            effective_start = start - timedelta(minutes=grace)
+            if effective_start <= local_now <= end:
+                matches.append((start, assignment))
 
     if not matches:
         return None
@@ -157,6 +202,33 @@ def _record(user, event_type, source, outcome, now, token_hash=None,
     )
 
 
+def _record_with_token(user, event_type, source, outcome, now, token_hash,
+                       shift=None, is_extra=False, delay_minutes=0):
+    """Records an event with a token_hash, handling TOCTOU races.
+
+    If another concurrent request already inserted a row with the same
+    token_hash, we catch the IntegrityError and record as INVALIDO_reuso.
+    Non-token-hash integrity errors (FK, NOT NULL, CHECK) are re-raised.
+    """
+    try:
+        return _record(user, event_type, source, outcome, now,
+                       token_hash=token_hash, shift=shift,
+                       is_extra=is_extra, delay_minutes=delay_minutes)
+    except IntegrityError:
+        logging.exception("IntegrityError during _record_with_token")
+        # Verify the conflict is actually a same-token reuse, not some
+        # other constraint violation (FK, NOT NULL, CHECK, etc.).
+        existing = AttendanceEvent.select().where(
+            AttendanceEvent.token_hash == token_hash
+        ).first()
+        if existing is None:
+            raise
+        # The existing row is a valid prior use of this token → record reuse.
+        return _record(user, event_type, source, "INVALIDO_reuso", now,
+                       token_hash=None, shift=shift,
+                       is_extra=is_extra, delay_minutes=delay_minutes)
+
+
 # ── QR validation ─────────────────────────────────────────────────────
 
 
@@ -172,6 +244,15 @@ def validate_qr(jwt_token, now=None):
     from app.services.token import verify_qr_token
     payload = verify_qr_token(jwt_token)
 
+    if payload is not None:
+        event_type = payload.get("event_type")
+        if event_type not in AttendanceEvent.EVENT_TYPES:
+            event = _record(None, event_type or "unknown", "qr",
+                            "INVALIDO_evento_invalido", now,
+                            token_hash=token_hash)
+            return {"ok": False, "event": event,
+                    "error": "INVALIDO_evento_invalido"}
+
     # Reuse check first: a consumed token must never succeed again, even
     # when it has since expired.
     previously_used = AttendanceEvent.select().where(
@@ -180,9 +261,16 @@ def validate_qr(jwt_token, now=None):
 
     if payload is None:
         if previously_used is not None:
+            # Distinguish actual reuse (token was consumed for OK) from
+            # a second scan of an expired token that was never consumed.
+            if previously_used.outcome.startswith("OK"):
+                event = _record(previously_used.user, previously_used.event_type,
+                                "qr", "INVALIDO_reuso", now, token_hash=None)
+                return {"ok": False, "event": event, "error": "INVALIDO_reuso"}
+            # Expired token scanned again → both rows are INVALIDO_qr_expirado.
             event = _record(previously_used.user, previously_used.event_type,
-                            "qr", "INVALIDO_reuso", now, token_hash=None)
-            return {"ok": False, "event": event, "error": "INVALIDO_reuso"}
+                            "qr", "INVALIDO_qr_expirado", now, token_hash=None)
+            return {"ok": False, "event": event, "error": "INVALIDO_qr_expirado"}
         # Audit metadata from an unverified decode — the outcome is still
         # INVALIDO_qr_expirado; the claims are never trusted.
         claims = _unverified_claims(jwt_token)
@@ -190,8 +278,9 @@ def validate_qr(jwt_token, now=None):
         if claims.get("uid"):
             audit_user = User.get_or_none(User.id == claims["uid"])
         event_type = claims.get("event_type") or "unknown"
-        event = _record(audit_user, event_type, "qr", "INVALIDO_qr_expirado",
-                        now, token_hash=token_hash)
+        event = _record_with_token(audit_user, event_type, "qr",
+                                    "INVALIDO_qr_expirado", now,
+                                    token_hash=token_hash)
         return {"ok": False, "event": event, "error": "INVALIDO_qr_expirado"}
 
     user = User.get_or_none(User.id == payload["uid"])
@@ -203,7 +292,7 @@ def validate_qr(jwt_token, now=None):
         return {"ok": False, "event": event, "error": "INVALIDO_reuso"}
 
     if user is None or not user.is_active:
-        event = _record(None, event_type, "qr",
+        event = _record(user, event_type, "qr",
                         "INVALIDO_persona_incorrecta", now,
                         token_hash=token_hash)
         return {"ok": False, "event": event,
@@ -224,26 +313,63 @@ def validate_qr(jwt_token, now=None):
                     "error": "INVALIDO_fuera_de_horario"}
 
         local_now = now.astimezone(_org_timezone())
-        start, end = _window(assignment.template.start_time,
-                             assignment.template.end_time, local_now)
-        effective_start = start - timedelta(minutes=_grace_minutes())
-        if not (effective_start <= local_now <= end):
-            event = _record(user, event_type, "qr",
-                            "INVALIDO_fuera_de_horario", now,
-                            token_hash=token_hash)
-            return {"ok": False, "event": event,
-                    "error": "INVALIDO_fuera_de_horario"}
 
-        delay = compute_delay_minutes(start.astimezone(timezone.utc),
+        if assignment.template.is_overnight:
+            # Check both today-started and yesterday-started windows
+            windows = _overnight_window(assignment.template.start_time,
+                                        assignment.template.end_time,
+                                        local_now)
+            mask = assignment.template.weekday_mask or "1111111"
+            in_window = False
+            matched_start = None
+            for start, end in windows:
+                window_weekday = start.weekday()
+                if len(mask) > window_weekday and \
+                        mask[window_weekday] == "0":
+                    continue
+                effective_start = start - timedelta(minutes=_grace_minutes())
+                if effective_start <= local_now <= end:
+                    in_window = True
+                    matched_start = start
+                    break
+            if not in_window:
+                event = _record(user, event_type, "qr",
+                                "INVALIDO_fuera_de_horario", now,
+                                token_hash=token_hash)
+                return {"ok": False, "event": event,
+                        "error": "INVALIDO_fuera_de_horario"}
+        else:
+            mask = assignment.template.weekday_mask or "1111111"
+            if len(mask) > local_now.weekday() and \
+                    mask[local_now.weekday()] == "0":
+                event = _record(user, event_type, "qr",
+                                "INVALIDO_fuera_de_horario", now,
+                                token_hash=token_hash)
+                return {"ok": False, "event": event,
+                        "error": "INVALIDO_fuera_de_horario"}
+            start, end = _window(assignment.template.start_time,
+                                 assignment.template.end_time, local_now)
+            matched_start = start
+            effective_start = start - timedelta(minutes=_grace_minutes())
+            if not (effective_start <= local_now <= end):
+                event = _record(user, event_type, "qr",
+                                "INVALIDO_fuera_de_horario", now,
+                                token_hash=token_hash)
+                return {"ok": False, "event": event,
+                        "error": "INVALIDO_fuera_de_horario"}
+
+        delay = compute_delay_minutes(matched_start.astimezone(timezone.utc),
                                       now.astimezone(timezone.utc))
-        event = _record(user, event_type, "qr", "OK", now,
-                        token_hash=token_hash, shift=assignment,
-                        is_extra=False, delay_minutes=delay)
+        event = _record_with_token(user, event_type, "qr", "OK", now,
+                                   token_hash=token_hash, shift=assignment,
+                                   is_extra=False,
+                                   delay_minutes=delay if event_type == "entry" else None)
         return {"ok": True, "event": event, "error": None}
 
     # Unbound token → extra-hours sign.
-    event = _record(user, event_type, "qr", "OK_extra", now,
-                    token_hash=token_hash, shift=None, is_extra=True)
+    event = _record_with_token(user, event_type, "qr", "OK_extra", now,
+                               token_hash=token_hash, shift=None,
+                               is_extra=True)
     return {"ok": True, "event": event, "error": None}
 
 
@@ -257,7 +383,20 @@ def validate_kiosk(user_id, event_type, now=None):
     kiosk_enabled toggle and the shift window, then records the attempt.
     """
     now = now or _default_now()
+
+    if event_type not in AttendanceEvent.EVENT_TYPES:
+        event = _record(None, event_type or "unknown", "kiosk",
+                        "INVALIDO_evento_invalido", now)
+        return {"ok": False, "event": event,
+                "error": "INVALIDO_evento_invalido"}
+
     user = User.get_or_none(User.id == user_id)
+
+    if user is None or not user.is_active:
+        event = _record(user, event_type, "kiosk",
+                        "INVALIDO_persona_incorrecta", now)
+        return {"ok": False, "event": event,
+                "error": "INVALIDO_persona_incorrecta"}
 
     if not _kiosk_enabled():
         event = _record(user, event_type, "kiosk", "INVALIDO_kiosk_disabled",
@@ -268,13 +407,29 @@ def validate_kiosk(user_id, event_type, now=None):
     assignment = resolve_shift(user_id, now=now)
     if assignment is not None:
         local_now = now.astimezone(_org_timezone())
-        start, _end = _window(assignment.template.start_time,
-                              assignment.template.end_time, local_now)
-        delay = compute_delay_minutes(start.astimezone(timezone.utc),
+        if assignment.template.is_overnight:
+            windows = _overnight_window(assignment.template.start_time,
+                                        assignment.template.end_time,
+                                        local_now)
+            matched_start = None
+            for start, end in windows:
+                effective_start = start - timedelta(minutes=_grace_minutes())
+                if effective_start <= local_now <= end:
+                    matched_start = start
+                    break
+            if matched_start is None:
+                matched_start = _window(
+                    assignment.template.start_time,
+                    assignment.template.end_time, local_now)[0]
+        else:
+            matched_start, _end = _window(
+                assignment.template.start_time,
+                assignment.template.end_time, local_now)
+        delay = compute_delay_minutes(matched_start.astimezone(timezone.utc),
                                       now.astimezone(timezone.utc))
         event = _record(user, event_type, "kiosk", "OK", now,
                         shift=assignment, is_extra=False,
-                        delay_minutes=delay)
+                        delay_minutes=delay if event_type == "entry" else None)
         return {"ok": True, "event": event, "error": None}
 
     event = _record(user, event_type, "kiosk", "OK_extra", now,

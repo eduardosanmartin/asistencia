@@ -183,8 +183,9 @@ class TestValidateQR:
 
         assert result["ok"] is False
         assert result["error"] == "INVALIDO_persona_incorrecta"
-        assert AttendanceEvent.get_by_id(result["event"].id).outcome == \
-            "INVALIDO_persona_incorrecta"
+        event = AttendanceEvent.get_by_id(result["event"].id)
+        assert event.outcome == "INVALIDO_persona_incorrecta"
+        assert event.user_id == inactive.id
 
     def test_out_of_window_records_fuera_de_horario(self, app):
         carlos = _make_user(app)
@@ -283,6 +284,44 @@ class TestValidateKiosk:
         assert row.shift_id is None
 
 
+# ── R2-2: IntegrityError not caused by token_hash reuse ───────────────
+
+
+class TestRecordWithTokenIntegrity:
+    def test_integrity_error_not_from_reuse_is_reraised(self, app):
+        """An IntegrityError caused by something other than token_hash
+        reuse must be re-raised, not silently converted to INVALIDO_reuso."""
+        from unittest.mock import patch
+        from peewee import IntegrityError as PWIntegrityError
+        carlos = _make_user(app, username="integ")
+        _set_config(app, "kiosk_enabled", "true")
+
+        with app.app_context():
+            # Monkeypatch _record to raise IntegrityError on the first
+            # call (the real insert), then verify re-raise behavior.
+            original_record = __import__(
+                "app.services.attendance", fromlist=["_record"]
+            )._record
+            call_count = [0]
+
+            def fake_record(*args, **kwargs):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    raise PWIntegrityError("Simulated FK violation")
+                return original_record(*args, **kwargs)
+
+            with patch("app.services.attendance._record", side_effect=fake_record):
+                try:
+                    from app.services.attendance import _record_with_token
+                    _record_with_token(
+                        carlos, "entry", "qr", "OK",
+                        datetime.now(timezone.utc),
+                        token_hash="fake_hash_123")
+                    assert False, "Should have raised IntegrityError"
+                except PWIntegrityError:
+                    pass  # Expected: non-reuse IntegrityError re-raised
+
+
 # ── resolve_shift (task 3.2) ──────────────────────────────────────────
 
 
@@ -351,6 +390,104 @@ class TestResolveShift:
         assert resolved is None
 
 
+# ── R2-3: overnight weekday mask uses shift-start weekday ─────────────
+
+
+class TestOvernightWeekdayMask:
+    def test_overnight_friday_to_saturday_entry_saturday_01(self, app):
+        """Mon–Fri 22:00–06:00 overnight shift. Worker scans exit at
+        Saturday 01:00 → window started Friday 22:00, mask[4]='1' → OK."""
+        carlos = _make_user(app, username="nocturno")
+        # Mon-Fri enabled: index 0..4 = '1', Sat/Sun = '0'
+        template = _make_shift(app, start="22:00", end="06:00",
+                               mask="1111100")
+        _assign(app, carlos, template)
+
+        # Saturday 01:00 UTC. local_now.weekday() = 5 (Saturday).
+        # Window started Friday 22:00 (weekday 4) → mask[4] = '1' → match.
+        with app.app_context():
+            resolved = resolve_shift(
+                carlos.id,
+                now=datetime(2026, 9, 12, 1, 0, tzinfo=timezone.utc))
+        assert resolved is not None
+
+    def test_overnight_sunday_not_in_mon_fri_mask(self, app):
+        """Mon–Fri 22:00–06:00 overnight shift. Sunday 01:00 → window
+        started Saturday 22:00 (weekday 5), mask[5]='0' → no match."""
+        carlos = _make_user(app, username="domingo")
+        template = _make_shift(app, start="22:00", end="06:00",
+                               mask="1111100")
+        _assign(app, carlos, template)
+
+        # Sunday 01:00 UTC. local_now.weekday() = 6 (Sunday).
+        # Window started Saturday 22:00 (weekday 5) → mask[5] = '0' → skip.
+        # Today-started window (Sunday 22:00 → Monday 06:00) → weekday 6, mask[6]='0' → skip.
+        with app.app_context():
+            resolved = resolve_shift(
+                carlos.id,
+                now=datetime(2026, 9, 13, 1, 0, tzinfo=timezone.utc))
+        assert resolved is None
+
+    def test_overnight_friday_to_saturday_qr_exit(self, app):
+        """QR path: overnight Mon–Fri 22:00–06:00, exit at Saturday 01:00
+        with QR bound to the shift → OK, not INVALIDO_fuera_de_horario."""
+        carlos = _make_user(app, username="qrnocturno")
+        template = _make_shift(app, start="22:00", end="06:00",
+                               mask="1111100")
+        assignment = _assign(app, carlos, template)
+
+        with app.app_context():
+            token = generate_qr_token(carlos.id, "exit", assignment.id, 3600)
+            result = validate_qr(
+                token,
+                now=datetime(2026, 9, 12, 1, 0, tzinfo=timezone.utc))
+
+        assert result["ok"] is True
+        assert result["event"].outcome == "OK"
+
+
+# ── R2-4: event_type validation ───────────────────────────────────────
+
+
+class TestEventTypeValidation:
+    def test_validate_kiosk_rejects_bogus_event_type(self, app):
+        carlos = _make_user(app)
+        _set_config(app, "kiosk_enabled", "true")
+
+        with app.app_context():
+            result = validate_kiosk(carlos.id, "bogus")
+
+        assert result["ok"] is False
+        assert result["error"] == "INVALIDO_evento_invalido"
+        event = AttendanceEvent.get_by_id(result["event"].id)
+        assert event.outcome == "INVALIDO_evento_invalido"
+        assert event.source == "kiosk"
+
+    def test_validate_qr_rejects_bogus_event_type(self, app):
+        carlos = _make_user(app)
+        with app.app_context():
+            # Craft a token with bogus event_type by generating a valid
+            # one and monkeypatching the payload.
+            from unittest.mock import patch
+            token = generate_qr_token(carlos.id, "entry", None, 3600)
+            fake_payload = {
+                "uid": carlos.id,
+                "event_type": "bogus",
+                "exp": 9999999999,
+                "nbf": 1000000000,
+                "iat": 1000000000,
+                "jti": "test-jti",
+            }
+            with patch("app.services.token.verify_qr_token",
+                       return_value=fake_payload):
+                result = validate_qr(token)
+
+        assert result["ok"] is False
+        assert result["error"] == "INVALIDO_evento_invalido"
+        event = AttendanceEvent.get_by_id(result["event"].id)
+        assert event.outcome == "INVALIDO_evento_invalido"
+
+
 # ── get_last_event (task 3.2) ─────────────────────────────────────────
 
 
@@ -394,3 +531,48 @@ class TestComputeDelayMinutes:
             start = datetime(2026, 9, 9, 6, 0, tzinfo=timezone.utc)
             now = datetime(2026, 9, 9, 6, 6, tzinfo=timezone.utc)
             assert compute_delay_minutes(start, now) == 6
+
+
+# ── F3-1: non-overnight weekday mask check ────────────────────────────
+
+
+class TestNonOvernightWeekdayMask:
+    def test_weekend_scan_rejected_for_mon_fri_shift(self, app):
+        """Non-overnight Mon–Fri shift: QR scanned on Saturday within
+        the clock window → INVALIDO_fuera_de_horario, not OK."""
+        carlos = _make_user(app, username="finde_qr")
+        template = _make_shift(app, start="06:00", end="14:00",
+                               mask="1111100")
+        assignment = _assign(app, carlos, template)
+
+        # Saturday 2026-09-12 10:00 UTC — inside 06:00–14:00 window but
+        # Saturday (weekday=5) is disabled in mask "1111100".
+        with app.app_context():
+            token = generate_qr_token(carlos.id, "entry", assignment.id, 3600)
+            result = validate_qr(
+                token,
+                now=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc))
+
+        assert result["ok"] is False
+        assert result["error"] == "INVALIDO_fuera_de_horario"
+        event = AttendanceEvent.get_by_id(result["event"].id)
+        assert event.outcome == "INVALIDO_fuera_de_horario"
+
+    def test_weekday_scan_accepted_for_mon_fri_shift(self, app):
+        """Non-overnight Mon–Fri shift: QR scanned on Monday within
+        the clock window → OK (control case)."""
+        carlos = _make_user(app, username="lunes_qr")
+        template = _make_shift(app, start="06:00", end="14:00",
+                               mask="1111100")
+        assignment = _assign(app, carlos, template)
+
+        # Monday 2026-09-07 08:00 UTC — inside 06:00–14:00, Monday (weekday=0)
+        # is enabled in mask "1111100".
+        with app.app_context():
+            token = generate_qr_token(carlos.id, "entry", assignment.id, 3600)
+            result = validate_qr(
+                token,
+                now=datetime(2026, 9, 7, 8, 0, tzinfo=timezone.utc))
+
+        assert result["ok"] is True
+        assert result["event"].outcome == "OK"
