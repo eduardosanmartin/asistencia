@@ -324,3 +324,24 @@ class TestSystemConfig:
             data={"key": "late_grace_minutes", "value": "10"},
         )
         assert response.status_code == 403
+
+
+# ── R2-1: N+1 on usuarios page ────────────────────────────────────────
+
+
+class TestUsuariosNPlusOne:
+    def test_usuarios_page_renders_with_supervisor_team(self, auth_admin):
+        """The usuarios page must render without N+1 errors when users
+        have supervisors (the template accesses u.supervisor.name)."""
+        client, admin = auth_admin
+        supervisor = _create_user("supervisor1", role="supervisor",
+                                  supervisor=admin)
+        _create_user("worker1", supervisor=supervisor)
+        _create_user("worker2", supervisor=supervisor)
+
+        response = client.get("/admin/usuarios")
+        assert response.status_code == 200
+        page = response.data.decode()
+        assert "worker1" in page
+        assert "worker2" in page
+        assert "supervisor1" in page

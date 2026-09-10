@@ -18,6 +18,7 @@ Messages follow the delta specs (e.g. «Nombre de plantilla duplicado»,
 import re
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from peewee import prefetch
 
 from ..models import (
     AssignedShift,
@@ -68,7 +69,11 @@ def usuarios():
             ]
             supervisor = None
             if supervisor_id:
-                supervisor = User.get_or_none(User.id == int(supervisor_id))
+                sid = supervisor_id
+                if not sid.isdigit():
+                    flash("Supervisor inválido.", "error")
+                    return redirect(url_for("admin.usuarios"))
+                supervisor = User.get_or_none(User.id == int(sid))
             User.create(
                 username=username,
                 email=email or f"{username}@asistencia.local",
@@ -85,7 +90,7 @@ def usuarios():
             )
         return redirect(url_for("admin.usuarios"))
 
-    users = User.select().order_by(User.name)
+    users = prefetch(User.select().order_by(User.name), User)
     supervisors = User.select().where(
         User.role.contains("supervisor"), User.is_active == True  # noqa: E712
     )
@@ -180,7 +185,10 @@ def plantilla_delete(template_id):
 
 def _viewer():
     """Returns the logged-in user of the current session."""
-    return User.get_by_id(int(session.get("user_id")))
+    user = User.get_or_none(User.id == session.get("user_id"))
+    if user is None:
+        abort(401)
+    return user
 
 
 def _team_query(viewer):
@@ -204,6 +212,13 @@ def asignaciones():
         user_id = (request.form.get("user_id") or "").strip()
         template_id = (request.form.get("template_id") or "").strip()
 
+        if user_id and not user_id.isdigit():
+            flash("Usuario inválido.", "error")
+            return redirect(url_for("admin.asignaciones"))
+        if template_id and not template_id.isdigit():
+            flash("Plantilla inválida.", "error")
+            return redirect(url_for("admin.asignaciones"))
+
         user = User.get_or_none(User.id == int(user_id)) if user_id else None
         template = (
             ShiftTemplate.get_or_none(ShiftTemplate.id == int(template_id))
@@ -219,7 +234,7 @@ def asignaciones():
             flash("Asignación creada.", "success")
         return redirect(url_for("admin.asignaciones"))
 
-    assignments = _team_query(viewer).order_by(AssignedShift.id)
+    assignments = prefetch(_team_query(viewer).order_by(AssignedShift.id), User, ShiftTemplate)
     if viewer.has_role("administrador"):
         users = User.select().where(User.is_active == True).order_by(User.name)  # noqa: E712
     else:
