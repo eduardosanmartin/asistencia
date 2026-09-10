@@ -16,7 +16,7 @@ from app.services.attendance import _default_now
 from app.services.security import hash_password
 from app.services.token import generate_qr_token
 
-from conftest import create_user
+from tests.helpers import create_user
 
 
 @pytest.fixture(autouse=True)

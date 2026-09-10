@@ -24,10 +24,11 @@ from flask import (
 
 from app.models import User
 from app.services.attendance import (
-    get_last_event,
+    get_last_accepted_event,
     resolve_shift,
     validate_kiosk,
 )
+from app.services.hours import ACCEPTED_OUTCOMES
 from app.services.security import verify_password
 from app.services.token import generate_qr_token
 
@@ -85,6 +86,9 @@ def qr():
     """
     user_id = request.form.get("user_id", type=int)
     event_type = request.form.get("event_type", "entry")
+    if event_type not in ("entry", "exit"):
+        flash("Tipo de marca no válido", "error")
+        return redirect(url_for("terminal.index"))
     worker = User.get_or_none(
         User.id == user_id, User.is_active == True  # noqa: E712
     )
@@ -92,7 +96,7 @@ def qr():
         flash("Seleccione un trabajador válido", "error")
         return redirect(url_for("terminal.index"))
 
-    last = get_last_event(worker.id)
+    last = get_last_accepted_event(worker.id)
     incoherent = last is not None and last.event_type == event_type
     if incoherent and request.form.get("continue") != "1":
         return render_template(
@@ -133,13 +137,28 @@ def kiosk():
     password = request.form.get("password", "")
     event_type = request.form.get("event_type", "entry")
     user = User.get_or_none(User.username == username)
+    if event_type not in ("entry", "exit"):
+        flash("Tipo de marca no válido", "error")
+        return redirect(url_for("terminal.kiosk"))
     if user is None or not user.is_active or not verify_password(
         password, user.password_hash
     ):
+        # Record the failed attempt as INVALIDO_credenciales
+        from app.models import AttendanceEvent as _AE
+        _AE.create(
+            user=user if user else None,
+            event_type=event_type if event_type in ("entry", "exit") else "entry",
+            source="kiosk",
+            outcome="INVALIDO_credenciales",
+        )
         flash("Credenciales inválidas", "error")
         return redirect(url_for("terminal.kiosk"))
 
-    last = get_last_event(user.id)
+    if user.must_change_password:
+        flash("Debe iniciar sesión y cambiar su contraseña antes de usar el kiosco.", "warning")
+        return redirect(url_for("auth.login"))
+
+    last = get_last_accepted_event(user.id)
     incoherent = last is not None and last.event_type == event_type
     if incoherent and request.form.get("continue") != "1":
         return render_template(

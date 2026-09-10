@@ -20,7 +20,7 @@ from app.services.attendance import get_last_event
 from app.services.security import hash_password
 from app.services.token import verify_qr_token
 
-from conftest import create_user
+from tests.helpers import create_user
 
 MARCAR_URL_RE = re.compile(r"/marcar/([A-Za-z0-9_\-\.]+)")
 
@@ -185,7 +185,11 @@ class TestKiosk:
         ).data.decode()
 
         assert "Credenciales inválidas" in page
-        assert AttendanceEvent.select().count() == 0
+        # Failed kiosk attempts are now audited (Fix 13)
+        event = AttendanceEvent.select().order_by(
+            AttendanceEvent.id.desc()).get()
+        assert event.outcome == "INVALIDO_credenciales"
+        assert event.source == "kiosk"
 
     def test_incoherent_sequence_warns_then_confirms(self, client):
         kiosk_user = create_user(username="kiosk3", name="Kiosk Tres")
@@ -208,3 +212,40 @@ class TestKiosk:
         ).data.decode()
         assert "Marca registrada" in page
         assert AttendanceEvent.select().count() == 2
+
+
+# ── R2-6: must_change_password redirect in kiosk ──────────────────────
+
+
+class TestKioskPasswordChange:
+    def test_must_change_password_redirects_to_login(self, client, monkeypatch):
+        """Kiosk user with must_change_password=True is redirected to
+        login (not cambiar_password which requires a session), and no
+        OK event is recorded."""
+        kiosk_user = create_user(role="funcionario", username="cambiar",
+                                 name="Cambiar Pass", must_change=True)
+        _set_config("kiosk_enabled", "true")
+        template = ShiftTemplate.create(name="Turno Mañana",
+                                        start_time="06:00", end_time="14:00",
+                                        weekday_mask="1111100")
+        AssignedShift.create(user=kiosk_user, template=template)
+        monkeypatch.setattr(
+            "app.services.attendance._default_now",
+            lambda: datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc),
+        )
+
+        response = client.post(
+            "/terminal/kiosk",
+            data={"username": "cambiar", "password": "test1234",
+                  "event_type": "entry"},
+            follow_redirects=False,
+        )
+
+        # Must redirect to login, not to cambiar_password
+        assert response.status_code == 302
+        assert "/login" in response.headers["Location"]
+        # No OK event should be recorded
+        ok_events = AttendanceEvent.select().where(
+            AttendanceEvent.outcome.in_(("OK", "OK_extra"))
+        ).count()
+        assert ok_events == 0
